@@ -1,0 +1,145 @@
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateEmployeeDto } from './dto/create-employee.dto';
+import { UserRole } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class EmployeesService {
+  constructor(private prisma: PrismaService) {}
+
+  async create(dto: CreateEmployeeDto, companyId?: string) {
+    if (dto.type === 'ATTENDANT') {
+      // Validate email is present for attendants
+      if (!dto.email) {
+        throw new BadRequestException(
+          'Email is required for ATTENDANT employees',
+        );
+      }
+
+      // Check if email already exists
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: dto.email },
+      });
+
+      if (existingUser) {
+        throw new BadRequestException('Email already exists');
+      }
+
+      // Check if idNumber already exists
+      const existingIdNumber = await this.prisma.user.findUnique({
+        where: { idNumber: dto.idNumber },
+      });
+
+      if (existingIdNumber) {
+        throw new BadRequestException('ID number already exists');
+      }
+
+      // Hash password using idNumber
+      const password = await bcrypt.hash(dto.idNumber, 10);
+
+      // Create User with ATTENDANT role
+      const attendant = await this.prisma.user.create({
+        data: {
+          name: dto.name,
+          email: dto.email,
+          idNumber: dto.idNumber,
+          password,
+          role: UserRole.ATTENDANT,
+          companyId,
+        },
+      });
+
+      return {
+        id: attendant.id,
+        name: attendant.name,
+        idNumber: attendant.idNumber,
+        type: 'ATTENDANT' as const,
+        email: attendant.email,
+        photoUrl: attendant.photoUrl,
+      };
+    }
+
+    if (dto.type === 'VALET') {
+      // Create Valet
+      const valet = await this.prisma.valet.create({
+        data: {
+          name: dto.name,
+          idNumber: dto.idNumber,
+          companyId,
+        },
+      });
+
+      return {
+        id: valet.id,
+        name: valet.name,
+        idNumber: valet.idNumber,
+        type: 'VALET' as const,
+      };
+    }
+
+    throw new BadRequestException('Invalid employee type');
+  }
+
+  async getAll(companyId?: string) {
+    console.log('🔍 [EmployeesService.getAll] companyId:', companyId);
+    const [valets, attendants] = await Promise.all([
+      this.prisma.valet.findMany({
+        where: companyId ? { companyId } : {},
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.user.findMany({
+        where: {
+          role: UserRole.ATTENDANT,
+          ...(companyId ? { companyId } : {}),
+        },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+    console.log('🔍 [EmployeesService.getAll] results:', { valetsCount: valets.length, attendantsCount: attendants.length });
+
+    const valetRecords = valets.map((v) => ({
+      id: v.id,
+      name: v.name,
+      idNumber: v.idNumber,
+      type: 'VALET' as const,
+    }));
+
+    const attendantRecords = attendants.map((a) => ({
+      id: a.id,
+      name: a.name || '',
+      idNumber: a.idNumber || '',
+      type: 'ATTENDANT' as const,
+      email: a.email,
+      photoUrl: a.photoUrl,
+    }));
+
+    return [...valetRecords, ...attendantRecords];
+  }
+
+  async delete(id: string, type: 'VALET' | 'ATTENDANT') {
+    if (type === 'VALET') {
+      const valet = await this.prisma.valet.findUnique({ where: { id } });
+      if (!valet) {
+        throw new NotFoundException('Valet not found');
+      }
+      await this.prisma.valet.delete({ where: { id } });
+      return { message: 'Valet deleted successfully' };
+    }
+
+    if (type === 'ATTENDANT') {
+      const attendant = await this.prisma.user.findUnique({ where: { id } });
+      if (!attendant || attendant.role !== UserRole.ATTENDANT) {
+        throw new NotFoundException('Attendant not found');
+      }
+      await this.prisma.user.delete({ where: { id } });
+      return { message: 'Attendant deleted successfully' };
+    }
+
+    throw new BadRequestException('Invalid employee type');
+  }
+}

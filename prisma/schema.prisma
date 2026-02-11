@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum UserRole {
+  ADMIN
+  ATTENDANT
+  CLIENT
+}
+
+enum PaymentMethodType {
+  ZELLE
+  MOBILE_PAYMENT
+  BINANCE
+  CASH
+  CARD
+}
+
+enum ValidationType {
+  MANUAL
+  AUTOMATIC
+}
+
+enum PaymentStatus {
+  PENDING
+  RECEIVED
+  CANCELLED
+}
+
+enum BillingType {
+  HOURLY
+  FLAT_RATE
+}
+
+// Modelos
+model Company {
+  id             String          @id @default(cuid())
+  name           String
+  photoUrl       String?         @db.Text // Foto en Base64 (útil para attendants)
+  paymentMethods PaymentMethod[]
+  valets         Valet[]
+  users          User[]
+
+  @@map("companies")
+}
+
+model Valet {
+  id                     String          @id @default(cuid())
+  name                   String
+  idNumber               String
+  company                Company?        @relation(fields: [companyId], references: [id])
+  companyId              String?
+  parkingRecordsCheckIn  ParkingRecord[] @relation("CheckInValet")
+  parkingRecordsCheckOut ParkingRecord[] @relation("CheckOutValet")
+  parkingRecords         ParkingRecord[]
+
+  @@map("valets")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String // Hash de la contraseña
+  name      String?
+  role      UserRole
+  phone     String? // Teléfono (útil para clients/attendants)
+  idNumber  String?  @unique // Cédula/ID (útil para clients/attendants)
+  photoUrl  String?  @db.Text // Foto en Base64 (útil para attendants)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  ownedVehicles Vehicle[] @relation("VehicleOwner")
+
+  payments Payment[] @relation("ProcessedBy")
+
+  registerRecords ParkingRecord[] @relation("RegisterRecord")
+
+  parkingRecords ParkingRecord[]
+
+  company   Company? @relation(fields: [companyId], references: [id])
+  companyId String?
+
+  @@index([email])
+  @@index([idNumber])
+  @@map("users")
+}
+
+model Vehicle {
+  id        String   @id @default(cuid())
+  plate     String   @unique
+  brand     String?
+  model     String?
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relación con dueño del vehículo (CLIENT)
+  ownerId String?
+  owner   User?   @relation("VehicleOwner", fields: [ownerId], references: [id])
+
+  @@index([plate])
+  @@index([ownerId])
+  @@map("vehicles")
+}
+
+model ParkingRecord {
+  id String @id @default(cuid())
+
+  // Copia de información del vehículo (NO FK)
+  plate String // Placa copiada
+  brand String? // Marca copiada
+  model String? // Modelo copiado
+  color String? // Color copiado
+
+  checkInAt  DateTime  @default(now())
+  checkOutAt DateTime?
+  notes      String?   @db.Text
+
+  // Valet de entrada (quien recibe el vehículo)
+  registerRecordId String?
+  registerRecord   User?   @relation("RegisterRecord", fields: [registerRecordId], references: [id])
+  checkInValetId   String?
+  checkInValet     Valet?  @relation("CheckInValet", fields: [checkInValetId], references: [id])
+
+  // Valet de salida (quien entrega el vehículo)
+  checkOutValetId String?
+  checkOutValet   Valet?  @relation("CheckOutValet", fields: [checkOutValetId], references: [id])
+
+  // Cliente dueño del vehículo (solo para referencia)
+  ownerId String?
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  valet     Valet?   @relation(fields: [valetId], references: [id])
+  valetId   String?
+
+  @@index([plate])
+  @@index([checkInAt])
+  @@index([ownerId])
+  @@map("parking_records")
+}
+
+model PaymentMethod {
+  id        String            @id @default(cuid())
+  name      String
+  form      String
+  type      PaymentMethodType
+  isActive  Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  payments  Payment[]
+  company   Company?  @relation(fields: [companyId], references: [id])
+  companyId String?
+
+  @@map("payment_methods")
+}
+
+model Payment {
+  id              String         @id @default(cuid())
+  amountUSD       Float
+  tip             Float          @default(0) // Propina en USD
+  status          PaymentStatus  @default(PENDING)
+  date            DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  parkingRecordId String
+  parkingRecord   ParkingRecord  @relation(fields: [parkingRecordId], references: [id])
+  reference       String? // Referencia del pago
+  note            String?        @db.Text // Nota del pago
+  fee             String
+  validation      ValidationType
+
+  processedById   String?
+  processedBy     User?          @relation("ProcessedBy", fields: [processedById], references: [id])
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  paymentMethodId String?
+
+  @@index([parkingRecordId])
+  @@index([status])
+  @@index([date])
+  @@map("payments")
+}
+
+model Settings {
+  id          String      @id @default(cuid())
+  billingType BillingType @default(HOURLY)
+  rate        Float       @default(3.0) // USD por hora o flat rate
+  tipEnabled  Boolean     @default(true)
+  updatedAt   DateTime    @updatedAt
+
+  @@map("settings")
+}
