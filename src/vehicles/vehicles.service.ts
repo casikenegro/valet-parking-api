@@ -266,7 +266,9 @@ export class VehiclesService {
 
     const where: Prisma.ParkingRecordWhereInput = {};
 
-    // Status filter
+    if (options.companyId != null) {
+      where.companyId = options.companyId;
+    }
     if (options.status === "active") {
       where.checkOutAt = null;
       where.payments = { none: {} };
@@ -316,50 +318,88 @@ export class VehiclesService {
       ];
     }
 
-    const [parkingRecords, total] = await Promise.all([
-      this.prisma.parkingRecord.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          registerRecord: {
-            select: {
-              id: true,
-              name: true,
-              idNumber: true,
+    const [parkingRecords, activeCount, pendingCount, completedCount, total] =
+      await Promise.all([
+        this.prisma.parkingRecord.findMany({
+          where,
+          skip,
+          take: limit,
+          include: {
+            registerRecord: {
+              select: {
+                id: true,
+                name: true,
+                idNumber: true,
+              },
             },
-          },
-          checkInValet: {
-            select: {
-              id: true,
-              name: true,
-              idNumber: true,
+            checkInValet: {
+              select: {
+                id: true,
+                name: true,
+                idNumber: true,
+              },
             },
-          },
-          checkOutValet: {
-            select: {
-              id: true,
-              name: true,
-              idNumber: true,
+            checkOutValet: {
+              select: {
+                id: true,
+                name: true,
+                idNumber: true,
+              },
             },
+            payments: true,
           },
-          payments: true,
-        },
-        orderBy: {
-          checkInAt: "desc",
-        },
-      }),
-      this.prisma.parkingRecord.count({ where }),
-    ]);
+          orderBy: {
+            checkInAt: "desc",
+          },
+        }),
+        this.prisma.parkingRecord.count({
+          where: {
+            ...where,
+            checkOutAt: null,
+            payments: { none: {} },
+          },
+        }),
+        this.prisma.parkingRecord.count({
+          where: {
+            ...where,
+            checkOutAt: null,
+            payments: { some: {} },
+          },
+        }),
+        this.prisma.parkingRecord.count({
+          where: {
+            ...where,
+            checkOutValetId: undefined,
+            payments: undefined,
+            checkOutAt: { not: null },
+          },
+        }),
+        this.prisma.parkingRecord.count({ where }),
+      ]);
 
     return {
       data: parkingRecords,
       meta: {
         page,
         limit,
-        total,
         totalPages: Math.ceil(total / limit),
+        active: activeCount,
+        pending_delivery: pendingCount,
+        completed: completedCount,
+        all: total,
       },
     };
+  }
+
+  async getMyActiveParkingRecords(userId: string) {
+    return this.prisma.parkingRecord.findMany({
+      where: { ownerId: userId, checkOutAt: null },
+      include: {
+        payments: true,
+        checkInValet: { select: { id: true, name: true, idNumber: true } },
+        checkOutValet: { select: { id: true, name: true, idNumber: true } },
+      },
+      orderBy: { checkInAt: "desc" },
+    });
   }
 }

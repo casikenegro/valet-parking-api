@@ -3,6 +3,10 @@ import { Type } from "class-transformer";
 
 export class FilterVehiclesDto {
   @IsOptional()
+  @IsString()
+  companyId?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   page?: number;

@@ -1,5 +1,11 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsString, IsOptional } from 'class-validator';
-import { ValidationType } from '@prisma/client';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsString,
+  IsOptional,
+} from "class-validator";
+import { ValidationType } from "@prisma/client";
 
 export class CreatePaymentDto {
   @IsNotEmpty()
@@ -19,8 +25,8 @@ export class CreatePaymentDto {
   tip?: number;
 
   @IsNotEmpty()
-  @IsString()
-  fee: string;
+  @IsNumber()
+  fee: number;
 
   @IsNotEmpty()
   @IsEnum(ValidationType)

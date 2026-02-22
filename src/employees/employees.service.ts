@@ -2,22 +2,22 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateEmployeeDto } from './dto/create-employee.dto';
-import { UserRole } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+} from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateEmployeeDto } from "./dto/create-employee.dto";
+import { UserRole } from "@prisma/client";
+import * as bcrypt from "bcrypt";
 
 @Injectable()
 export class EmployeesService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: CreateEmployeeDto, companyId?: string) {
-    if (dto.type === 'ATTENDANT') {
+  async create(dto: CreateEmployeeDto, companyId?: string | null) {
+    if (dto.type === "ATTENDANT") {
       // Validate email is present for attendants
       if (!dto.email) {
         throw new BadRequestException(
-          'Email is required for ATTENDANT employees',
+          "Email is required for ATTENDANT employees",
         );
       }
 
@@ -27,7 +27,7 @@ export class EmployeesService {
       });
 
       if (existingUser) {
-        throw new BadRequestException('Email already exists');
+        throw new BadRequestException("Email already exists");
       }
 
       // Check if idNumber already exists
@@ -36,7 +36,7 @@ export class EmployeesService {
       });
 
       if (existingIdNumber) {
-        throw new BadRequestException('ID number already exists');
+        throw new BadRequestException("ID number already exists");
       }
 
       // Hash password using idNumber
@@ -50,7 +50,7 @@ export class EmployeesService {
           idNumber: dto.idNumber,
           password,
           role: UserRole.ATTENDANT,
-          companyId,
+          ...(companyId ? { companyUsers: { create: { companyId } } } : {}),
         },
       });
 
@@ -58,13 +58,13 @@ export class EmployeesService {
         id: attendant.id,
         name: attendant.name,
         idNumber: attendant.idNumber,
-        type: 'ATTENDANT' as const,
+        type: "ATTENDANT" as const,
         email: attendant.email,
         photoUrl: attendant.photoUrl,
       };
     }
 
-    if (dto.type === 'VALET') {
+    if (dto.type === "VALET") {
       // Create Valet
       const valet = await this.prisma.valet.create({
         data: {
@@ -78,68 +78,76 @@ export class EmployeesService {
         id: valet.id,
         name: valet.name,
         idNumber: valet.idNumber,
-        type: 'VALET' as const,
+        type: "VALET" as const,
       };
     }
 
-    throw new BadRequestException('Invalid employee type');
+    throw new BadRequestException("Invalid employee type");
   }
 
-  async getAll(companyId?: string) {
-    console.log('🔍 [EmployeesService.getAll] companyId:', companyId);
-    const [valets, attendants] = await Promise.all([
+  async getAll(companyIds: string[] = []) {
+    const hasCompanyFilter = companyIds.length > 0;
+    const [valets, users] = await Promise.all([
       this.prisma.valet.findMany({
-        where: companyId ? { companyId } : {},
-        orderBy: { name: 'asc' },
+        where: hasCompanyFilter ? { companyId: { in: companyIds } } : {},
+        orderBy: { name: "asc" },
       }),
       this.prisma.user.findMany({
         where: {
-          role: UserRole.ATTENDANT,
-          ...(companyId ? { companyId } : {}),
+          deletedAt: null,
+          role: { in: [UserRole.ATTENDANT, UserRole.MANAGER] },
+
+          ...(hasCompanyFilter
+            ? { companyUsers: { some: { companyId: { in: companyIds } } } }
+            : {}),
         },
-        orderBy: { name: 'asc' },
+        orderBy: { name: "asc" },
       }),
     ]);
-    console.log('🔍 [EmployeesService.getAll] results:', { valetsCount: valets.length, attendantsCount: attendants.length });
 
     const valetRecords = valets.map((v) => ({
       id: v.id,
       name: v.name,
       idNumber: v.idNumber,
-      type: 'VALET' as const,
+      type: "VALET" as const,
     }));
 
-    const attendantRecords = attendants.map((a) => ({
+    const usersRecords = users.map((a) => ({
       id: a.id,
-      name: a.name || '',
-      idNumber: a.idNumber || '',
-      type: 'ATTENDANT' as const,
+      name: a.name || "",
+      type: a.role,
+      idNumber: a.idNumber || "",
       email: a.email,
       photoUrl: a.photoUrl,
     }));
 
-    return [...valetRecords, ...attendantRecords];
+    return [...valetRecords, ...usersRecords];
   }
 
-  async delete(id: string, type: 'VALET' | 'ATTENDANT') {
-    if (type === 'VALET') {
+  async delete(id: string, type: "VALET" | "ATTENDANT") {
+    if (type === "VALET") {
       const valet = await this.prisma.valet.findUnique({ where: { id } });
       if (!valet) {
-        throw new NotFoundException('Valet not found');
+        throw new NotFoundException("Valet not found");
       }
       await this.prisma.valet.delete({ where: { id } });
-      return { message: 'Valet deleted successfully' };
+      return { message: "Valet deleted successfully" };
     }
 
-    if (type === 'ATTENDANT') {
+    if (type === "ATTENDANT") {
       const attendant = await this.prisma.user.findUnique({ where: { id } });
       if (!attendant || attendant.role !== UserRole.ATTENDANT) {
-        throw new NotFoundException('Attendant not found');
+        throw new NotFoundException("Attendant not found");
       }
-      await this.prisma.user.delete({ where: { id } });
-      return { message: 'Attendant deleted successfully' };
+      await this.prisma.user.update({
+        where: { id },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
+      return { message: "Attendant deleted successfully" };
     }
 
-    throw new BadRequestException('Invalid employee type');
+    throw new BadRequestException("Invalid employee type");
   }
 }

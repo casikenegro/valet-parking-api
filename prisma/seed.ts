@@ -1,350 +1,791 @@
 import {
   PrismaClient,
   UserRole,
-  BillingType,
   PaymentMethodType,
+  ValidationType,
   PaymentStatus,
+  PlanType,
+  FeeType,
 } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 
 const prisma = new PrismaClient();
 
+// ── Helpers ────────────────────────────────────────────────
+const hash = (pw: string) => bcrypt.hash(pw, 10);
+
+function randomBetween(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomFrom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomDate(start: Date, end: Date): Date {
+  return new Date(
+    start.getTime() + Math.random() * (end.getTime() - start.getTime()),
+  );
+}
+
+function generatePlate(): string {
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const l = () => letters[Math.floor(Math.random() * letters.length)];
+  const n = () => Math.floor(Math.random() * 10);
+  return `${l()}${l()}${l()}${n()}${n()}${l()}${n()}`;
+}
+
+// ── Realistic data pools ──────────────────────────────────
+const BRANDS_MODELS: { brand: string; models: string[] }[] = [
+  { brand: "Toyota", models: ["Corolla", "Camry", "RAV4", "Hilux", "Yaris"] },
+  {
+    brand: "Chevrolet",
+    models: ["Aveo", "Cruze", "Spark", "Silverado", "Tracker"],
+  },
+  { brand: "Ford", models: ["Fiesta", "Focus", "Explorer", "F-150", "Escape"] },
+  { brand: "Hyundai", models: ["Accent", "Tucson", "Elantra", "Santa Fe"] },
+  { brand: "Kia", models: ["Rio", "Sportage", "Seltos", "Forte"] },
+  { brand: "Honda", models: ["Civic", "CR-V", "Accord", "HR-V"] },
+  { brand: "Nissan", models: ["Sentra", "Versa", "Kicks", "Frontier"] },
+  { brand: "Volkswagen", models: ["Gol", "Jetta", "Tiguan", "Polo"] },
+];
+
+const COLORS = [
+  "Blanco",
+  "Negro",
+  "Gris",
+  "Plata",
+  "Rojo",
+  "Azul",
+  "Verde",
+  "Dorado",
+  "Marrón",
+  "Beige",
+];
+
+const FIRST_NAMES = [
+  "Carlos",
+  "María",
+  "José",
+  "Ana",
+  "Luis",
+  "Carmen",
+  "Pedro",
+  "Rosa",
+  "Miguel",
+  "Laura",
+  "Diego",
+  "Sofía",
+  "Andrés",
+  "Valentina",
+  "Gabriel",
+  "Isabella",
+  "Rafael",
+  "Camila",
+  "Fernando",
+  "Daniela",
+  "Alejandro",
+  "Gabriela",
+  "Ricardo",
+  "Natalia",
+];
+
+const LAST_NAMES = [
+  "García",
+  "Rodríguez",
+  "Martínez",
+  "López",
+  "González",
+  "Hernández",
+  "Pérez",
+  "Sánchez",
+  "Ramírez",
+  "Torres",
+  "Flores",
+  "Rivera",
+  "Gómez",
+  "Díaz",
+  "Morales",
+  "Reyes",
+  "Cruz",
+  "Ortiz",
+  "Gutiérrez",
+  "Mendoza",
+];
+
+function randomName(): string {
+  return `${randomFrom(FIRST_NAMES)} ${randomFrom(LAST_NAMES)}`;
+}
+
+function randomVehicle() {
+  const brandData = randomFrom(BRANDS_MODELS);
+  return {
+    brand: brandData.brand,
+    model: randomFrom(brandData.models),
+    color: randomFrom(COLORS),
+    plate: generatePlate(),
+  };
+}
+
+// ── Main seed ─────────────────────────────────────────────
 async function main() {
-  console.log("🌱 Seeding database...");
+  console.log("Limpiando base de datos...");
+  await prisma.payment.deleteMany();
+  await prisma.companyInvoice.deleteMany();
+  await prisma.parkingRecord.deleteMany();
+  await prisma.vehicle.deleteMany();
+  await prisma.companyPlan.deleteMany();
+  await prisma.paymentMethod.deleteMany();
+  await prisma.companyUser.deleteMany();
+  await prisma.valet.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.company.deleteMany();
+  console.log("Base de datos limpia.");
 
-  // Crear usuario admin
-  const adminPassword = await bcrypt.hash("admin123", 10);
-  const admin = await prisma.user.upsert({
-    where: { email: "admin@valetparking.com" },
-    update: {},
-    create: {
-      email: "admin@valetparking.com",
-      password: adminPassword,
-      name: "Admin User",
+  // ────────────────────────────────────────────────────────
+  // 1. COMPANIES
+  // ────────────────────────────────────────────────────────
+  const companyA = await prisma.company.create({
+    data: { name: "Estacionamiento Centro Plaza" },
+  });
+  const companyB = await prisma.company.create({
+    data: { name: "Parking Aeropuerto Internacional" },
+  });
+  const companyC = await prisma.company.create({
+    data: { name: "Valet Mall del Este" },
+  });
+
+  console.log("Companies creadas.");
+
+  // ────────────────────────────────────────────────────────
+  // 2. PAYMENT METHODS (por company)
+  // ────────────────────────────────────────────────────────
+  const paymentMethodsMap: Record<string, any[]> = {};
+
+  for (const company of [companyA, companyB, companyC]) {
+    const methods = await Promise.all([
+      prisma.paymentMethod.create({
+        data: {
+          name: "Pago Movil",
+          form: "0412-1234567 / CI: 12345678 / Banco Venezuela",
+          type: PaymentMethodType.MOBILE_PAYMENT,
+          companyId: company.id,
+        },
+      }),
+      prisma.paymentMethod.create({
+        data: {
+          name: "Zelle",
+          form: "pagos@empresa.com",
+          type: PaymentMethodType.ZELLE,
+          companyId: company.id,
+        },
+      }),
+      prisma.paymentMethod.create({
+        data: {
+          name: "Efectivo USD",
+          form: "Pago directo en caja",
+          type: PaymentMethodType.CASH,
+          companyId: company.id,
+        },
+      }),
+      prisma.paymentMethod.create({
+        data: {
+          name: "Binance Pay",
+          form: "ID: 987654321",
+          type: PaymentMethodType.BINANCE,
+          companyId: company.id,
+        },
+      }),
+      prisma.paymentMethod.create({
+        data: {
+          name: "Punto de venta",
+          form: "Banco Mercantil - Terminal #4",
+          type: PaymentMethodType.CARD,
+          companyId: company.id,
+        },
+      }),
+    ]);
+    paymentMethodsMap[company.id] = methods;
+  }
+
+  console.log("Payment methods creados.");
+
+  // ────────────────────────────────────────────────────────
+  // 3. COMPANY PLANS (con historial)
+  // ────────────────────────────────────────────────────────
+
+  // Company A: empezo con FLAT_RATE, migro a MIXED
+  const companyAFlat = await prisma.companyPlan.create({
+    data: {
+      companyId: companyA.id,
+      planType: PlanType.FLAT_RATE,
+      flatRate: 500,
+      isActive: false,
+      createdAt: new Date("2025-06-01"),
+    },
+  });
+
+  const companyAMixed = await prisma.companyPlan.create({
+    data: {
+      companyId: companyA.id,
+      planType: PlanType.MIXED,
+      basePrice: 300,
+      perVehicleRate: 3,
+      feeType: FeeType.PERCENTAGE,
+      feeValue: 10,
+      isActive: true,
+      createdAt: new Date("2025-12-01"),
+    },
+  });
+
+  // Company B
+  const companyBPlan = await prisma.companyPlan.create({
+    data: {
+      companyId: companyB.id,
+      planType: PlanType.PER_VEHICLE,
+      perVehicleRate: 5,
+      feeType: FeeType.FIXED,
+      feeValue: 1,
+      isActive: true,
+      createdAt: new Date("2025-09-01"),
+    },
+  });
+
+  // Company C
+  const companyCPlan = await prisma.companyPlan.create({
+    data: {
+      companyId: companyC.id,
+      planType: PlanType.FLAT_RATE,
+      flatRate: 800,
+      isActive: true,
+      createdAt: new Date("2025-10-01"),
+    },
+  });
+
+  console.log("Company plans creados.");
+
+  // ────────────────────────────────────────────────────────
+  // 4. SUPER ADMIN
+  // ────────────────────────────────────────────────────────
+  await prisma.user.create({
+    data: {
+      email: "superadmin@valetpark.com",
+      password: await hash("super123"),
+      name: "Roberto Mendoza",
+      role: UserRole.SUPER_ADMIN,
+      phone: "0414-9876543",
+      idNumber: "V-10000001",
+    },
+  });
+
+  console.log("Super Admin creado.");
+
+  // ────────────────────────────────────────────────────────
+  // 5. ADMIN con 3 COMPANIES (el principal)
+  // ────────────────────────────────────────────────────────
+  const adminPrincipal = await prisma.user.create({
+    data: {
+      email: "admin@valetpark.com",
+      password: await hash("admin123"),
+      name: "Carlos García",
       role: UserRole.ADMIN,
-      idNumber: "V-00000001",
+      phone: "0412-5551234",
+      idNumber: "V-15000001",
     },
   });
 
-  console.log("✅ Admin user created:", admin.email);
-
-  // Crear usuario attendant
-  const attendantPassword = await bcrypt.hash("attendant123", 10);
-  const attendant = await prisma.user.upsert({
-    where: { email: "attendant@valetparking.com" },
-    update: {},
-    create: {
-      email: "attendant@valetparking.com",
-      password: attendantPassword,
-      name: "Attendant User",
-      role: UserRole.ATTENDANT,
-      idNumber: "V-98765432",
-    },
-  });
-
-  console.log("✅ Attendant user created:", attendant.email);
-
-  // Crear usuario client
-  const clientPassword = await bcrypt.hash("client123", 10);
-  const client = await prisma.user.upsert({
-    where: { email: "client@valetparking.com" },
-    update: {},
-    create: {
-      email: "client@valetparking.com",
-      password: clientPassword,
-      name: "Juan Pérez",
-      role: UserRole.CLIENT,
-      phone: "+1234567890",
-      idNumber: "V-12345678",
-    },
-  });
-
-  console.log("✅ Client user created:", client.email);
-
-  // Crear segundo client
-  const client2Password = await bcrypt.hash("client456", 10);
-  const client2 = await prisma.user.upsert({
-    where: { email: "maria@valetparking.com" },
-    update: {},
-    create: {
-      email: "maria@valetparking.com",
-      password: client2Password,
-      name: "María García",
-      role: UserRole.CLIENT,
-      phone: "+1234567891",
-      idNumber: "V-87654321",
-    },
-  });
-
-  console.log("✅ Client 2 created:", client2.email);
-
-  // Crear vehículos
-  const vehicle1 = await prisma.vehicle.upsert({
-    where: { plate: "ABC123" },
-    update: {},
-    create: {
-      plate: "ABC123",
-      brand: "Toyota",
-      model: "Corolla",
-      color: "Blanco",
-      ownerId: client.id,
-    },
-  });
-
-  const vehicle2 = await prisma.vehicle.upsert({
-    where: { plate: "XYZ789" },
-    update: {},
-    create: {
-      plate: "XYZ789",
-      brand: "Honda",
-      model: "Civic",
-      color: "Negro",
-      ownerId: client.id,
-    },
-  });
-
-  const vehicle3 = await prisma.vehicle.upsert({
-    where: { plate: "DEF456" },
-    update: {},
-    create: {
-      plate: "DEF456",
-      brand: "Ford",
-      model: "Explorer",
-      color: "Azul",
-      ownerId: client2.id,
-    },
-  });
-
-  const vehicle4 = await prisma.vehicle.upsert({
-    where: { plate: "GHI321" },
-    update: {},
-    create: {
-      plate: "GHI321",
-      brand: "Chevrolet",
-      model: "Spark",
-      color: "Rojo",
-      ownerId: client2.id,
-    },
-  });
-
-  console.log(
-    "✅ Vehicles created:",
-    [vehicle1.plate, vehicle2.plate, vehicle3.plate, vehicle4.plate].join(", "),
-  );
-
-  // Crear company
-  const company = await prisma.company.upsert({
-    where: { id: "default-company" },
-    update: {},
-    create: {
-      id: "default-company",
-      name: "Valet Parking Corp",
-    },
-  });
-
-  console.log("✅ Company created:", company.name);
-
-  // Crear valets
-  const valet1 = await prisma.valet.upsert({
-    where: { id: "valet-carlos" },
-    update: {},
-    create: {
-      id: "valet-carlos",
-      name: "Carlos Rodríguez",
-      idNumber: "V-11223344",
-      companyId: company.id,
-    },
-  });
-
-  const valet2 = await prisma.valet.upsert({
-    where: { id: "valet-pedro" },
-    update: {},
-    create: {
-      id: "valet-pedro",
-      name: "Pedro Martínez",
-      idNumber: "V-55667788",
-      companyId: company.id,
-    },
-  });
-
-  const valet3 = await prisma.valet.upsert({
-    where: { id: "valet-luis" },
-    update: {},
-    create: {
-      id: "valet-luis",
-      name: "Luis Hernández",
-      idNumber: "V-99001122",
-      companyId: company.id,
-    },
-  });
-
-  console.log(
-    "✅ Valets created:",
-    [valet1.name, valet2.name, valet3.name].join(", "),
-  );
-
-  // Crear métodos de pago
-  const paymentMethods = [
-    { id: "pm-cash", form: "Efectivo USD", type: PaymentMethodType.CASH },
-    { id: "pm-zelle", form: "Zelle", type: PaymentMethodType.ZELLE },
-    {
-      id: "pm-mobile",
-      form: "Pago Móvil",
-      type: PaymentMethodType.MOBILE_PAYMENT,
-    },
-    { id: "pm-binance", form: "Binance Pay", type: PaymentMethodType.BINANCE },
-    {
-      id: "pm-card",
-      form: "Tarjeta de Débito/Crédito",
-      type: PaymentMethodType.CARD,
-    },
-  ];
-
-  for (const pm of paymentMethods) {
-    await prisma.paymentMethod.upsert({
-      where: { id: pm.id },
-      update: {},
-      create: {
-        id: pm.id,
-        name: pm.form,
-        form: pm.form,
-        type: pm.type,
-        companyId: company.id,
-      },
+  // Conectar admin a las 3 companies via CompanyUser
+  for (const company of [companyA, companyB, companyC]) {
+    await prisma.companyUser.create({
+      data: { userId: adminPrincipal.id, companyId: company.id },
     });
   }
 
-  console.log("✅ Payment methods created:", paymentMethods.length);
-
-  // Crear settings iniciales
-  const settings = await prisma.settings.upsert({
-    where: { id: "default" },
-    update: {},
-    create: {
-      id: "default",
-      billingType: BillingType.HOURLY,
-      rate: 3.0,
-      tipEnabled: true,
+  // Segundo admin (solo company C)
+  const admin2 = await prisma.user.create({
+    data: {
+      email: "admin2@valetpark.com",
+      password: await hash("admin123"),
+      name: "Ana Torres",
+      role: UserRole.ADMIN,
+      phone: "0414-5559876",
+      idNumber: "V-15000002",
     },
   });
+  await prisma.companyUser.create({
+    data: { userId: admin2.id, companyId: companyC.id },
+  });
 
-  console.log("✅ Settings created:", settings);
+  console.log("Admins creados y conectados.");
 
-  // Crear parking records de ejemplo
+  // ────────────────────────────────────────────────────────
+  // 6. MANAGERS (1 por company)
+  // ────────────────────────────────────────────────────────
+  const managersData = [
+    {
+      name: "Miguel Ramírez",
+      email: "miguel.ramirez@valetpark.com",
+      idNumber: "V-16000001",
+      phone: "0424-1110001",
+      companyId: companyA.id,
+    },
+    {
+      name: "Laura Sánchez",
+      email: "laura.sanchez@valetpark.com",
+      idNumber: "V-16000002",
+      phone: "0424-1110002",
+      companyId: companyB.id,
+    },
+    {
+      name: "Pedro Flores",
+      email: "pedro.flores@valetpark.com",
+      idNumber: "V-16000003",
+      phone: "0424-1110003",
+      companyId: companyC.id,
+    },
+  ];
+
+  for (const m of managersData) {
+    const user = await prisma.user.create({
+      data: {
+        email: m.email,
+        password: await hash("manager123"),
+        name: m.name,
+        role: UserRole.MANAGER,
+        phone: m.phone,
+        idNumber: m.idNumber,
+      },
+    });
+    await prisma.companyUser.create({
+      data: { userId: user.id, companyId: m.companyId },
+    });
+  }
+
+  console.log("Managers creados.");
+
+  // ────────────────────────────────────────────────────────
+  // 7. ATTENDANTS (2-3 por company)
+  // ────────────────────────────────────────────────────────
+  const attendantsData = [
+    // Company A
+    {
+      name: "Diego López",
+      email: "diego.lopez@valetpark.com",
+      idNumber: "V-20000001",
+      phone: "0412-2220001",
+      companyId: companyA.id,
+    },
+    {
+      name: "Sofía Morales",
+      email: "sofia.morales@valetpark.com",
+      idNumber: "V-20000002",
+      phone: "0412-2220002",
+      companyId: companyA.id,
+    },
+    {
+      name: "Andrés Cruz",
+      email: "andres.cruz@valetpark.com",
+      idNumber: "V-20000003",
+      phone: "0412-2220003",
+      companyId: companyA.id,
+    },
+    // Company B
+    {
+      name: "Valentina Reyes",
+      email: "valentina.reyes@valetpark.com",
+      idNumber: "V-20000004",
+      phone: "0412-2220004",
+      companyId: companyB.id,
+    },
+    {
+      name: "Gabriel Díaz",
+      email: "gabriel.diaz@valetpark.com",
+      idNumber: "V-20000005",
+      phone: "0412-2220005",
+      companyId: companyB.id,
+    },
+    // Company C
+    {
+      name: "Isabella Gómez",
+      email: "isabella.gomez@valetpark.com",
+      idNumber: "V-20000006",
+      phone: "0412-2220006",
+      companyId: companyC.id,
+    },
+    {
+      name: "Rafael Hernández",
+      email: "rafael.hernandez@valetpark.com",
+      idNumber: "V-20000007",
+      phone: "0412-2220007",
+      companyId: companyC.id,
+    },
+    {
+      name: "Camila Rivera",
+      email: "camila.rivera@valetpark.com",
+      idNumber: "V-20000008",
+      phone: "0412-2220008",
+      companyId: companyC.id,
+    },
+  ];
+
+  const attendantsByCompany: Record<string, any[]> = {
+    [companyA.id]: [],
+    [companyB.id]: [],
+    [companyC.id]: [],
+  };
+
+  for (const att of attendantsData) {
+    const user = await prisma.user.create({
+      data: {
+        email: att.email,
+        password: await hash(att.idNumber),
+        name: att.name,
+        role: UserRole.ATTENDANT,
+        phone: att.phone,
+        idNumber: att.idNumber,
+      },
+    });
+    await prisma.companyUser.create({
+      data: { userId: user.id, companyId: att.companyId },
+    });
+    attendantsByCompany[att.companyId].push(user);
+  }
+
+  console.log("Attendants creados.");
+
+  // ────────────────────────────────────────────────────────
+  // 8. VALETS (2-3 por company)
+  // ────────────────────────────────────────────────────────
+  const valetsData = [
+    // Company A
+    { name: "Juan Pérez", idNumber: "V-25000001", companyId: companyA.id },
+    { name: "Marco Gutiérrez", idNumber: "V-25000002", companyId: companyA.id },
+    { name: "Luis Ortiz", idNumber: "V-25000003", companyId: companyA.id },
+    // Company B
+    { name: "Roberto Silva", idNumber: "V-25000004", companyId: companyB.id },
+    { name: "Tomás Mendoza", idNumber: "V-25000005", companyId: companyB.id },
+    // Company C
+    {
+      name: "Enrique Castillo",
+      idNumber: "V-25000006",
+      companyId: companyC.id,
+    },
+    { name: "Nicolás Vargas", idNumber: "V-25000007", companyId: companyC.id },
+    { name: "Sebastián Rojas", idNumber: "V-25000008", companyId: companyC.id },
+  ];
+
+  const valetsByCompany: Record<string, any[]> = {
+    [companyA.id]: [],
+    [companyB.id]: [],
+    [companyC.id]: [],
+  };
+
+  for (const v of valetsData) {
+    const valet = await prisma.valet.create({
+      data: { name: v.name, idNumber: v.idNumber, companyId: v.companyId },
+    });
+    valetsByCompany[v.companyId].push(valet);
+  }
+
+  console.log("Valets creados.");
+
+  // ────────────────────────────────────────────────────────
+  // 9. CLIENTS + VEHICLES
+  // ────────────────────────────────────────────────────────
+  const clients: any[] = [];
+
+  for (let i = 1; i <= 40; i++) {
+    const name = randomName();
+    const idNum = `V-${30000000 + i}`;
+    const client = await prisma.user.create({
+      data: {
+        email: `cliente${i}@mail.com`,
+        password: await hash(idNum),
+        name,
+        role: UserRole.CLIENT,
+        phone: `04${randomBetween(12, 26)}-${randomBetween(1000000, 9999999)}`,
+        idNumber: idNum,
+      },
+    });
+
+    // 1-3 vehiculos por cliente
+    const vehicleCount = randomBetween(1, 3);
+    const vehicleIds: string[] = [];
+    for (let v = 0; v < vehicleCount; v++) {
+      const vData = randomVehicle();
+      const vehicle = await prisma.vehicle.create({
+        data: { ...vData, ownerId: client.id },
+      });
+      vehicleIds.push(vehicle.id);
+    }
+
+    clients.push({ ...client, vehicleIds });
+  }
+
+  console.log(`${clients.length} clientes con vehiculos creados.`);
+
+  // ────────────────────────────────────────────────────────
+  // 10. PARKING RECORDS + PAYMENTS (45 dias de datos)
+  // ────────────────────────────────────────────────────────
   const now = new Date();
+  const fortyFiveDaysAgo = new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000);
 
-  // Parking record 1: Activo (sin checkout), registrado por admin, valet entrada Carlos
-  const pr1 = await prisma.parkingRecord.create({
-    data: {
-      plate: vehicle1.plate,
-      brand: vehicle1.brand,
-      model: vehicle1.model,
-      color: vehicle1.color,
-      ownerId: client.id,
-      registerRecordId: admin.id,
-      checkInValetId: valet1.id,
-      checkInAt: new Date(now.getTime() - 2 * 60 * 60 * 1000), // hace 2 horas
-    },
-  });
+  const companiesArr = [companyA, companyB, companyC];
+  // Distribucion de trafico: A=alta, B=media, C=alta
+  const recordsPerCompany: Record<string, number> = {
+    [companyA.id]: 180,
+    [companyB.id]: 100,
+    [companyC.id]: 150,
+  };
 
-  // Parking record 2: Activo, registrado por attendant, valet entrada Pedro
-  const pr2 = await prisma.parkingRecord.create({
-    data: {
-      plate: vehicle3.plate,
-      brand: vehicle3.brand,
-      model: vehicle3.model,
-      color: vehicle3.color,
-      ownerId: client2.id,
-      registerRecordId: attendant.id,
-      checkInValetId: valet2.id,
-      checkInAt: new Date(now.getTime() - 1 * 60 * 60 * 1000), // hace 1 hora
-    },
-  });
+  const parkingFees = [3, 5, 8, 10, 12, 15, 20];
+  let totalRecords = 0;
 
-  // Parking record 3: Completado (con checkout), registrado por admin, valet entrada Luis, valet salida Carlos
-  const pr3 = await prisma.parkingRecord.create({
-    data: {
-      plate: vehicle4.plate,
-      brand: vehicle4.brand,
-      model: vehicle4.model,
-      color: vehicle4.color,
-      ownerId: client2.id,
-      registerRecordId: admin.id,
-      checkInValetId: valet3.id,
-      checkOutValetId: valet1.id,
-      checkInAt: new Date(now.getTime() - 5 * 60 * 60 * 1000), // hace 5 horas
-      checkOutAt: new Date(now.getTime() - 3 * 60 * 60 * 1000), // salió hace 3 horas
-    },
-  });
+  for (const company of companiesArr) {
+    const companyValets = valetsByCompany[company.id];
+    const companyAttendants = attendantsByCompany[company.id];
+    const companyMethods = paymentMethodsMap[company.id];
+    const count = recordsPerCompany[company.id];
 
-  // Parking record 4: Completado con pago, registrado por attendant, valet entrada Pedro, valet salida Luis
-  const pr4 = await prisma.parkingRecord.create({
-    data: {
-      plate: "JKL654",
-      brand: "Hyundai",
-      model: "Tucson",
-      color: "Gris",
-      registerRecordId: attendant.id,
-      checkInValetId: valet2.id,
-      checkOutValetId: valet3.id,
-      checkInAt: new Date(now.getTime() - 4 * 60 * 60 * 1000),
-      checkOutAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
-    },
-  });
+    for (let i = 0; i < count; i++) {
+      const client = randomFrom(clients);
+      const vData = randomVehicle();
+      const checkInAt = randomDate(fortyFiveDaysAgo, now);
 
-  // Crear pago para pr3
-  await prisma.payment.create({
-    data: {
-      parkingRecordId: pr3.id,
-      amountUSD: 9.0,
-      tip: 1.0,
+      // 85% de los registros completados, 15% activos (sin checkout)
+      const isCompleted = Math.random() < 0.85;
+      const durationHours = randomBetween(1, 12);
+      const checkOutAt = isCompleted
+        ? new Date(checkInAt.getTime() + durationHours * 60 * 60 * 1000)
+        : null;
+
+      // Si el checkout es futuro, dejarlo sin checkout
+      const finalCheckOut = checkOutAt && checkOutAt <= now ? checkOutAt : null;
+
+      const checkInValet = randomFrom(companyValets);
+      const checkOutValet = finalCheckOut ? randomFrom(companyValets) : null;
+      const registerAttendant = randomFrom(companyAttendants);
+
+      const parkingRecord = await prisma.parkingRecord.create({
+        data: {
+          plate: vData.plate,
+          brand: vData.brand,
+          model: vData.model,
+          color: vData.color,
+          checkInAt,
+          checkOutAt: finalCheckOut,
+          ownerId: client.id,
+          companyId: company.id,
+          registerRecordId: registerAttendant.id,
+          checkInValetId: checkInValet.id,
+          checkOutValetId: checkOutValet?.id ?? null,
+          notes:
+            Math.random() < 0.15
+              ? randomFrom([
+                  "Cliente VIP",
+                  "Vehiculo con rayones previos",
+                  "Estacionado en zona premium",
+                  "Llave entregada en recepcion",
+                  "Solicito lavado adicional",
+                  "Recoger antes de las 6pm",
+                ])
+              : null,
+        },
+      });
+
+      // Crear pago si el registro esta completado o tiene mas de 1h
+      const shouldHavePayment =
+        finalCheckOut || checkInAt.getTime() < now.getTime() - 60 * 60 * 1000;
+
+      if (shouldHavePayment && Math.random() < 0.92) {
+        const baseFee = randomFrom(parkingFees);
+        const hasTip = Math.random() < 0.35;
+        const tip = hasTip ? randomBetween(1, 5) : 0;
+        const method = randomFrom(companyMethods);
+
+        // 90% RECEIVED, 7% PENDING, 3% CANCELLED
+        const statusRoll = Math.random();
+        let status: PaymentStatus;
+        if (statusRoll < 0.9) status = PaymentStatus.RECEIVED;
+        else if (statusRoll < 0.97) status = PaymentStatus.PENDING;
+        else status = PaymentStatus.CANCELLED;
+
+        const paymentDate =
+          finalCheckOut ?? new Date(checkInAt.getTime() + 30 * 60 * 1000);
+
+        await prisma.payment.create({
+          data: {
+            amountUSD: baseFee,
+            tip,
+            status,
+            date: paymentDate,
+            parkingRecordId: parkingRecord.id,
+            fee: baseFee * 0.1,
+            validation:
+              method.type === PaymentMethodType.CASH
+                ? ValidationType.MANUAL
+                : ValidationType.AUTOMATIC,
+            reference:
+              method.type === PaymentMethodType.CASH
+                ? null
+                : `REF-${randomBetween(100000, 999999)}`,
+            processedById: registerAttendant.id,
+            paymentMethodId: method.id,
+          },
+        });
+      }
+
+      totalRecords++;
+    }
+
+    console.log(`  ${company.name}: ${count} parking records creados.`);
+  }
+
+  console.log(`Total: ${totalRecords} parking records.`);
+
+  // ────────────────────────────────────────────────────────
+  // 11. COMPANY INVOICES (ultimo mes + mes anterior)
+  // ────────────────────────────────────────────────────────
+  const invoicesData = [
+    // Company A - Enero 2026 (MIXED)
+    {
+      companyPlanId: companyAMixed.id,
+      amountUSD: 300 + 55 * 3 + 55 * 3 * 0.1,
       status: PaymentStatus.RECEIVED,
-      fee: "3.00/hr",
-      validation: "MANUAL",
-      paymentMethodId: "pm-zelle",
-      processedById: admin.id,
+      date: new Date("2026-01-05"),
+      reference: "INV-2026-A-001",
+      note: "Factura Enero 2026 - Plan Mixto",
+      validation: ValidationType.AUTOMATIC,
+      planType: PlanType.MIXED,
+      vehicleCount: 55,
+      baseAmount: 300,
+      vehicleAmount: 55 * 3,
+      feeAmount: 55 * 3 * 0.1,
+      periodStart: new Date("2025-12-01"),
+      periodEnd: new Date("2025-12-31"),
+      paymentMethodId: paymentMethodsMap[companyA.id][1].id,
     },
-  });
 
-  // Crear pago para pr4
-  await prisma.payment.create({
-    data: {
-      parkingRecordId: pr4.id,
-      amountUSD: 6.0,
-      tip: 0,
+    // Company A - Febrero 2026
+    {
+      companyPlanId: companyAMixed.id,
+      amountUSD: 300 + 62 * 3 + 62 * 3 * 0.1,
+      status: PaymentStatus.PENDING,
+      date: new Date("2026-02-03"),
+      reference: "INV-2026-A-002",
+      note: "Factura Febrero 2026 - Plan Mixto",
+      validation: ValidationType.AUTOMATIC,
+      planType: PlanType.MIXED,
+      vehicleCount: 62,
+      baseAmount: 300,
+      vehicleAmount: 62 * 3,
+      feeAmount: 62 * 3 * 0.1,
+      periodStart: new Date("2026-01-01"),
+      periodEnd: new Date("2026-01-31"),
+      paymentMethodId: paymentMethodsMap[companyA.id][1].id,
+    },
+
+    // Company B - Enero 2026
+    {
+      companyPlanId: companyBPlan.id,
+      amountUSD: 38 * 5 + 38 * 1,
       status: PaymentStatus.RECEIVED,
-      fee: "3.00/hr",
-      validation: "MANUAL",
-      paymentMethodId: "pm-cash",
-      processedById: attendant.id,
+      date: new Date("2026-01-07"),
+      reference: "INV-2026-B-001",
+      note: "Factura Enero 2026 - Por vehículo",
+      validation: ValidationType.AUTOMATIC,
+      planType: PlanType.PER_VEHICLE,
+      vehicleCount: 38,
+      baseAmount: null,
+      vehicleAmount: 38 * 5,
+      feeAmount: 38 * 1,
+      periodStart: new Date("2025-12-01"),
+      periodEnd: new Date("2025-12-31"),
+      paymentMethodId: paymentMethodsMap[companyB.id][0].id,
     },
-  });
 
-  // Parking record 5: Activo, sin valet asignado (registro directo por admin)
-  await prisma.parkingRecord.create({
-    data: {
-      plate: vehicle2.plate,
-      brand: vehicle2.brand,
-      model: vehicle2.model,
-      color: vehicle2.color,
-      ownerId: client.id,
-      registerRecordId: admin.id,
-      checkInValetId: valet1.id,
-      checkInAt: new Date(now.getTime() - 30 * 60 * 1000), // hace 30 min
+    // Company B - Febrero 2026
+    {
+      companyPlanId: companyBPlan.id,
+      amountUSD: 42 * 5 + 42 * 1,
+      status: PaymentStatus.PENDING,
+      date: new Date("2026-02-05"),
+      reference: "INV-2026-B-002",
+      note: "Factura Febrero 2026 - Por vehículo",
+      validation: ValidationType.AUTOMATIC,
+      planType: PlanType.PER_VEHICLE,
+      vehicleCount: 42,
+      baseAmount: null,
+      vehicleAmount: 42 * 5,
+      feeAmount: 42 * 1,
+      periodStart: new Date("2026-01-01"),
+      periodEnd: new Date("2026-01-31"),
+      paymentMethodId: paymentMethodsMap[companyB.id][0].id,
     },
-  });
 
+    // Company C - Enero 2026
+    {
+      companyPlanId: companyCPlan.id,
+      amountUSD: 800,
+      status: PaymentStatus.RECEIVED,
+      date: new Date("2026-01-03"),
+      reference: "INV-2026-C-001",
+      note: "Factura Enero 2026 - Tasa fija",
+      validation: ValidationType.MANUAL,
+      planType: PlanType.FLAT_RATE,
+      vehicleCount: 48,
+      baseAmount: 800,
+      vehicleAmount: null,
+      feeAmount: null,
+      periodStart: new Date("2025-12-01"),
+      periodEnd: new Date("2025-12-31"),
+      paymentMethodId: paymentMethodsMap[companyC.id][2].id,
+    },
+
+    // Company C - Febrero 2026
+    {
+      companyPlanId: companyCPlan.id,
+      amountUSD: 800,
+      status: PaymentStatus.PENDING,
+      date: new Date("2026-02-04"),
+      reference: "INV-2026-C-002",
+      note: "Factura Febrero 2026 - Tasa fija",
+      validation: ValidationType.MANUAL,
+      planType: PlanType.FLAT_RATE,
+      vehicleCount: 51,
+      baseAmount: 800,
+      vehicleAmount: null,
+      feeAmount: null,
+      periodStart: new Date("2026-01-01"),
+      periodEnd: new Date("2026-01-31"),
+      paymentMethodId: paymentMethodsMap[companyC.id][2].id,
+    },
+  ];
+
+  for (const inv of invoicesData) {
+    await prisma.companyInvoice.create({ data: inv });
+  }
+
+  console.log(`${invoicesData.length} invoices creadas.`);
+
+  // ────────────────────────────────────────────────────────
+  // RESUMEN
+  // ────────────────────────────────────────────────────────
+  console.log("\n========== SEED COMPLETADO ==========");
+  console.log("Credenciales de acceso:");
+  console.log("  Super Admin: superadmin@valetpark.com / super123");
+  console.log("  Admin (3 companies): admin@valetpark.com / admin123");
+  console.log("  Admin (1 company):   admin2@valetpark.com / admin123");
   console.log(
-    "✅ Parking records created:",
-    [pr1.id, pr2.id, pr3.id, pr4.id].map((id) => id.slice(-7)).join(", "),
+    "  Managers: miguel.ramirez@ / laura.sanchez@ / pedro.flores@ (manager123)",
   );
-
-  console.log("🎉 Seeding completed!");
+  console.log("  Attendants: password = su numero de cedula");
+  console.log("======================================\n");
 }
 
 main()
   .catch((e) => {
-    console.error("❌ Seeding failed:", e);
+    console.error(e);
     process.exit(1);
   })
   .finally(async () => {

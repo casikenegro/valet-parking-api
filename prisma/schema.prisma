@@ -9,7 +9,9 @@ datasource db {
 
 // Enums
 enum UserRole {
+  SUPER_ADMIN
   ADMIN
+  MANAGER
   ATTENDANT
   CLIENT
 }
@@ -33,81 +35,100 @@ enum PaymentStatus {
   CANCELLED
 }
 
-enum BillingType {
-  HOURLY
-  FLAT_RATE
+enum PlanType {
+  FLAT_RATE // Tasa fija mensual
+  PER_VEHICLE // Cobro por vehículo registrado
+  MIXED // Precio base + cobro por vehículo
 }
 
-// Modelos
+enum FeeType {
+  PERCENTAGE // Fee porcentual (ej: 10%)
+  FIXED // Fee fijo (ej: $2 por vehículo)
+}
+
 model Company {
-  id             String          @id @default(cuid())
-  name           String
-  photoUrl       String?         @db.Text // Foto en Base64 (útil para attendants)
+  id       String  @id @default(cuid())
+  name     String
+  photoUrl String? @db.Text
+  isActive Boolean @default(true)
+
+  deletedAt   DateTime?
+  deletedById String?
+
   paymentMethods PaymentMethod[]
   valets         Valet[]
-  users          User[]
+  companyUsers   CompanyUser[]
+  parkingRecords ParkingRecord[]
+  plans          CompanyPlan[]
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deletedAt])
   @@map("companies")
 }
 
 model Valet {
-  id                     String          @id @default(cuid())
-  name                   String
-  idNumber               String
-  company                Company?        @relation(fields: [companyId], references: [id])
-  companyId              String?
+  id       String @id @default(cuid())
+  name     String
+  idNumber String
+
+  deletedAt DateTime?
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
   parkingRecordsCheckIn  ParkingRecord[] @relation("CheckInValet")
   parkingRecordsCheckOut ParkingRecord[] @relation("CheckOutValet")
-  parkingRecords         ParkingRecord[]
 
+  @@index([companyId])
+  @@index([deletedAt])
   @@map("valets")
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String // Hash de la contraseña
-  name      String?
-  role      UserRole
-  phone     String? // Teléfono (útil para clients/attendants)
-  idNumber  String?  @unique // Cédula/ID (útil para clients/attendants)
-  photoUrl  String?  @db.Text // Foto en Base64 (útil para attendants)
-  isActive  Boolean  @default(true)
+  id       String   @id @default(cuid())
+  email    String   @unique
+  password String
+  name     String?
+  role     UserRole
+  phone    String?
+  idNumber String?  @unique
+  photoUrl String?  @db.Text
+  isActive Boolean  @default(true)
+
+  deletedAt   DateTime?
+  deletedById String?
+
+  ownedVehicles   Vehicle[]       @relation("VehicleOwner")
+  payments        Payment[]       @relation("ProcessedBy")
+  registerRecords ParkingRecord[] @relation("RegisterRecord")
+  parkingRecords  ParkingRecord[]
+  companyUsers    CompanyUser[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relaciones
-  ownedVehicles Vehicle[] @relation("VehicleOwner")
-
-  payments Payment[] @relation("ProcessedBy")
-
-  registerRecords ParkingRecord[] @relation("RegisterRecord")
-
-  parkingRecords ParkingRecord[]
-
-  company   Company? @relation(fields: [companyId], references: [id])
-  companyId String?
-
-  @@index([email])
-  @@index([idNumber])
+  @@index([deletedAt])
   @@map("users")
 }
 
 model Vehicle {
-  id        String   @id @default(cuid())
-  plate     String   @unique
-  brand     String?
-  model     String?
-  color     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id    String  @id @default(cuid())
+  plate String  @unique
+  brand String?
+  model String?
+  color String?
 
-  // Relación con dueño del vehículo (CLIENT)
+  deletedAt DateTime?
+
   ownerId String?
   owner   User?   @relation("VehicleOwner", fields: [ownerId], references: [id])
 
-  @@index([plate])
-  @@index([ownerId])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deletedAt])
   @@map("vehicles")
 }
 
@@ -137,34 +158,42 @@ model ParkingRecord {
   // Cliente dueño del vehículo (solo para referencia)
   ownerId String?
 
+  // Empresa a la que pertenece el registro
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
   payments Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user      User?    @relation(fields: [userId], references: [id])
   userId    String?
-  valet     Valet?   @relation(fields: [valetId], references: [id])
-  valetId   String?
 
   @@index([plate])
   @@index([checkInAt])
   @@index([ownerId])
+  @@index([companyId])
   @@map("parking_records")
 }
 
 model PaymentMethod {
-  id        String            @id @default(cuid())
-  name      String
-  form      String
-  type      PaymentMethodType
-  isActive  Boolean           @default(true)
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  id       String            @id @default(cuid())
+  name     String
+  form     String
+  type     PaymentMethodType
+  isActive Boolean           @default(true)
 
-  payments  Payment[]
-  company   Company?  @relation(fields: [companyId], references: [id])
-  companyId String?
+  deletedAt DateTime?
 
+  payments        Payment[]
+  company         Company?         @relation(fields: [companyId], references: [id])
+  companyId       String?
+  companyInvoices CompanyInvoice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deletedAt])
   @@map("payment_methods")
 }
 
@@ -180,7 +209,7 @@ model Payment {
   parkingRecord   ParkingRecord  @relation(fields: [parkingRecordId], references: [id])
   reference       String? // Referencia del pago
   note            String?        @db.Text // Nota del pago
-  fee             String
+  fee             Float?
   validation      ValidationType
 
   processedById   String?
@@ -194,12 +223,72 @@ model Payment {
   @@map("payments")
 }
 
-model Settings {
-  id          String      @id @default(cuid())
-  billingType BillingType @default(HOURLY)
-  rate        Float       @default(3.0) // USD por hora o flat rate
-  tipEnabled  Boolean     @default(true)
-  updatedAt   DateTime    @updatedAt
+model CompanyPlan {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  planType  PlanType
 
-  @@map("settings")
+  flatRate       Float?
+  perVehicleRate Float?
+  feeType        FeeType?
+  feeValue       Float?
+  basePrice      Float?
+
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyInvoices CompanyInvoice[]
+
+  @@index([companyId])
+  @@index([deletedAt])
+  @@map("company_plans")
+}
+
+model CompanyInvoice {
+  id            String         @id @default(cuid())
+  companyPlanId String
+  companyPlan   CompanyPlan    @relation(fields: [companyPlanId], references: [id])
+  amountUSD     Float
+  status        PaymentStatus  @default(PENDING)
+  date          DateTime       @default(now())
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  reference     String?
+  note          String?        @db.Text
+  validation    ValidationType
+
+  // Detalle del cálculo
+  planType      PlanType
+  vehicleCount  Int? // Cantidad de vehículos en el período
+  baseAmount    Float? // Monto base (flatRate o basePrice)
+  vehicleAmount Float? // Monto por vehículos
+  feeAmount     Float? // Monto del fee aplicado
+  periodStart   DateTime? // Inicio del período facturado
+  periodEnd     DateTime? // Fin del período facturado
+
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  paymentMethodId String?
+
+  @@map("company_invoices")
+}
+
+model CompanyUser {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  joinedAt  DateTime @default(now())
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, companyId])
+  @@index([userId])
+  @@index([companyId])
+  @@map("company_users")
 }

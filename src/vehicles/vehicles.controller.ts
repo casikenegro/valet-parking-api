@@ -62,9 +62,15 @@ export class VehiclesController {
     return this.vehiclesService.getValets();
   }
 
+  @Get("my-car")
+  @Roles(UserRole.CLIENT)
+  getMyActiveParkingRecords(@CurrentUser() user: any) {
+    return this.vehiclesService.getMyActiveParkingRecords(user.id);
+  }
+
   // GET /api/vehicles - Listado completo con filtros
   @Get()
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.ATTENDANT)
   getAllVehicles(@Query() filters: FilterVehiclesDto) {
     return this.vehiclesService.getAllVehicles(filters);
   }

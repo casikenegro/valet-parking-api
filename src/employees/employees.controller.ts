@@ -23,14 +23,15 @@ export class EmployeesController {
   @Post()
   @Roles(UserRole.ADMIN)
   create(@Body() dto: CreateEmployeeDto, @CurrentUser() user: any) {
-    return this.employeesService.create(dto, user.companyId);
+    const companyId = user.companyUsers?.[0]?.company?.id;
+    return this.employeesService.create(dto, companyId);
   }
 
   @Get()
   @Roles(UserRole.ADMIN)
   getAll(@CurrentUser() user: any) {
-    console.log('🔍 [EmployeesController.getAll] user:', { id: user?.id, companyId: user?.companyId });
-    return this.employeesService.getAll(user?.companyId);
+    const companyIds = user.companyUsers?.map((cu: any) => cu.company?.id).filter(Boolean) || [];
+    return this.employeesService.getAll(companyIds);
   }
 
   @Delete(":id")
