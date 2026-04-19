@@ -18,12 +18,13 @@ Reemplazar el sistema inseguro de localStorage del frontend Next.js con una API 
 - ✅ Sistema de autenticación JWT con Passport
 - ✅ Sistema de roles (RBAC) con guards y decorators
 - ✅ 6 módulos de dominio completamente implementados
-- ✅ 26+ endpoints REST funcionales
+- ✅ 27+ endpoints REST funcionales
 - ✅ Validación automática con class-validator
 - ✅ Manejo de errores global
 - ✅ CORS configurado para Next.js
 - ✅ Seed de datos iniciales
 - ✅ Documentación completa en README.md
+- ✅ Integración de OneSignal para push notifications
 
 ## 🏗️ Arquitectura
 
@@ -44,6 +45,106 @@ Reemplazar el sistema inseguro de localStorage del frontend Next.js con una API 
 - **Autenticación**: JWT con Passport
 - **Validación**: class-validator
 - **TypeScript**: 5.x
+- **Push Notifications**: OneSignal (onesignal-node 3.4.0)
+
+## 📲 Integración OneSignal
+
+### Configuración
+
+Añadir a `.env`:
+```
+ONESIGNAL_APP_ID="tu-app-id"
+ONESIGNAL_API_KEY="tu-api-key"
+```
+
+### Utilidades
+
+**Archivo**: `src/utils/onesignal.ts`
+
+Función principal para enviar notificaciones:
+```ts
+export async function sendPushNotificationToDevices(
+  playerIds: string[],
+  title: string,
+  message: string,
+  data: any,
+): Promise<void>
+```
+
+Uso:
+```ts
+import { sendPushNotificationToDevices } from '../utils/onesignal';
+
+await sendPushNotificationToDevices(
+  ['device-id-1', 'device-id-2'],
+  'Título',
+  'Mensaje',
+  { customKey: 'valor' }
+);
+```
+
+### Endpoints de Notificaciones
+
+#### `PUT /users/update-notification-id`
+**Descripción**: Actualiza el ID de notificación push del usuario autenticado (OneSignal subscription ID)
+
+**Autenticación**: JWT (cualquier usuario autenticado)
+
+**Request Body**:
+```ts
+{
+  notificationID: string  // ID de suscripción de OneSignal
+}
+```
+
+**Response**:
+```ts
+{
+  id: string;
+  email: string;
+  name?: string;
+  notificationId?: string;
+  // ... otros campos del usuario
+}
+```
+
+**Códigos de respuesta**:
+- `200 OK`: ID actualizado correctamente
+- `400 Bad Request`: ID de notificación inválido o vacío
+- `401 Unauthorized`: Token JWT no válido o expirado
+- `404 Not Found`: Usuario no encontrado
+
+### Schema Prisma
+
+Campo agregado al modelo `User`:
+```prisma
+notificationId    String?   @map("notification_id")
+```
+
+### Implementación en Servicios
+
+Para enviar notificaciones desde cualquier servicio:
+
+1. Inyectar `PrismaService`
+2. Obtener `notificationId` del usuario
+3. Llamar a `sendPushNotificationToDevices()`
+
+**Ejemplo**:
+```ts
+const user = await this.prisma.user.findUnique({
+  where: { id: userId },
+  select: { notificationId: true }
+});
+
+if (user?.notificationId) {
+  await sendPushNotificationToDevices(
+    [user.notificationId],
+    'Título',
+    'Mensaje',
+    {}
+  );
+}
+```
 
 ## 🚀 Próximos Pasos
 

@@ -273,6 +273,18 @@ export class UsersService {
     });
   }
 
+  // ── 8. Actualizar ID de notificación ───────────────────
+  async updateNotificationId(userId: string, notificationId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { notificationId },
+      select: USER_SELECT,
+    });
+  }
+
   // ── Helpers ───────────────────────────────────────────
   private extractCompanyIds(user: any): string[] {
     return (

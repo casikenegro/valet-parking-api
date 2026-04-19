@@ -13,12 +13,14 @@ import { TransformInterceptor } from "./common/interceptors/transform.intercepto
 import { EmailService } from "./email/email.service";
 import { CompaniesModule } from "./companies/companies.module";
 import { UsersModule } from "./users/users.module";
+import { validate } from "./config/env.validation";
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ".env",
+      validate,
     }),
     PrismaModule,
     AuthModule,
